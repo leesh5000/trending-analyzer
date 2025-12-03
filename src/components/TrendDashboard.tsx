@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import TrendCard from './TrendCard';
 import { CountrySelector } from './CountrySelector';
+import { DatePicker } from './DatePicker';
 import { TrendItem } from '@/types';
 import { Loader2, RefreshCw, History } from 'lucide-react';
 
@@ -82,23 +83,11 @@ export function TrendDashboard() {
                 <div className="flex flex-col sm:flex-row items-end sm:items-center gap-3">
                     <CountrySelector value={geo} onChange={setGeo} />
 
-                    <div className="flex items-center gap-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg p-1">
-                        <input
-                            type="datetime-local"
-                            value={date}
-                            onChange={handleDateChange}
-                            className="bg-transparent border-none text-sm text-zinc-600 dark:text-zinc-300 focus:ring-0 w-40"
-                            title="Select date to view history"
-                        />
-                        {isHistoryMode && (
-                            <button
-                                onClick={clearDate}
-                                className="p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-md text-xs font-medium text-blue-600 dark:text-blue-400"
-                            >
-                                Live
-                            </button>
-                        )}
-                    </div>
+                    <DatePicker
+                        value={date}
+                        onChange={setDate}
+                        onClear={clearDate}
+                    />
 
                     <button
                         onClick={fetchTrends}

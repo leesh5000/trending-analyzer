@@ -22,11 +22,7 @@ export async function getDailyTrends(geo: string = 'US'): Promise<TrendItem[]> {
         const feed = await parser.parseURL(url);
         const allItems = feed.items.slice(0, 50); // Process top 50 items
 
-        // Extract keywords using AI for the top 20 items (to save tokens/time)
-        // We will only re-rank the top 20 for performance
-        const topSlice = allItems.slice(0, 20);
-        const remainingSlice = allItems.slice(20);
-
+        // Extract keywords using AI for ALL items to ensure consistent formatting
         let keywords: string[] = [];
         if (process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
             try {
@@ -39,8 +35,14 @@ export async function getDailyTrends(geo: string = 'US'): Promise<TrendItem[]> {
             Extract the main topic/keyword (1-3 words) from each of these news headlines.
             Return them in the exact same order.
             
+            IMPORTANT:
+            - If the country code is 'US', return the keyword in English.
+            - If the country code is NOT 'US' (e.g., KR, JP, CN, TW), translate the keyword to KOREAN.
+            
+            Target Country: ${geo}
+            
             Headlines:
-            ${topSlice.map((item, i) => `${i + 1}. ${item.title}`).join('\n')}
+            ${allItems.map((item: any, i: number) => `${i + 1}. ${item.title}`).join('\n')}
           `,
                 });
                 keywords = object.keywords;
@@ -49,50 +51,51 @@ export async function getDailyTrends(geo: string = 'US'): Promise<TrendItem[]> {
             }
         }
 
-        // Process top items with re-ranking in batches to avoid rate limits/timeouts
+        // Process ALL items in batches
         const BATCH_SIZE = 5;
-        const processedTopItems: TrendItem[] = [];
+        const processedItems: TrendItem[] = [];
 
-        for (let i = 0; i < topSlice.length; i += BATCH_SIZE) {
-            const batch = topSlice.slice(i, i + BATCH_SIZE);
+        for (let i = 0; i < allItems.length; i += BATCH_SIZE) {
+            const batch = allItems.slice(i, i + BATCH_SIZE);
             const batchResults = await Promise.all(batch.map(async (item, batchIndex) => {
                 const index = i + batchIndex;
                 const aiKeyword = keywords[index];
                 const originalTitle = item.title?.split(' - ')[0] || item.title || 'Unknown Trend';
                 const finalQuery = aiKeyword || originalTitle;
 
-                // Fetch Social & Video Stats for Ranking
+                // Fetch Social & Video Stats for Ranking (Only for top 20 to save API quota)
                 let socialCount = 0;
                 let videoCount = 0;
                 let searchInterest = 0;
+                const isTopTier = index < 20;
 
-                try {
-                    const [videos, redditPosts] = await Promise.all([
-                        getVideos(finalQuery).catch(() => []),
-                        getRedditPosts(finalQuery).catch(() => [])
-                    ]);
-                    videoCount = videos.length;
-                    // Estimate social count based on reddit posts score/comments (simplified)
-                    socialCount = redditPosts.reduce((acc, post) => acc + (post.score || 0), 0);
-                } catch (e) {
-                    console.error(`Error fetching social stats for ${finalQuery}`, e);
-                }
-
-                // Try Google Trends API for Interest
-                try {
-                    // google-trends-api interestOverTime
-                    const trendsData = await googleTrends.interestOverTime({ keyword: finalQuery, geo: region });
-                    const parsedData = JSON.parse(trendsData);
-                    if (parsedData.default && parsedData.default.timelineData && parsedData.default.timelineData.length > 0) {
-                        // Get the most recent interest value (0-100)
-                        const latestPoint = parsedData.default.timelineData[parsedData.default.timelineData.length - 1];
-                        searchInterest = latestPoint.value[0] || 0;
+                if (isTopTier) {
+                    try {
+                        const [videos, redditPosts] = await Promise.all([
+                            getVideos(finalQuery).catch(() => []),
+                            getRedditPosts(finalQuery).catch(() => [])
+                        ]);
+                        videoCount = videos.length;
+                        socialCount = redditPosts.reduce((acc, post) => acc + (post.score || 0), 0);
+                    } catch (e) {
+                        console.error(`Error fetching social stats for ${finalQuery}`, e);
                     }
-                } catch (e) {
-                    // console.warn(`Google Trends API failed for ${finalQuery}:`, e);
-                    // Continue without search interest score
+
+                    // Try Google Trends API for Interest
+                    try {
+                        const trendsData = await googleTrends.interestOverTime({ keyword: finalQuery, geo: region });
+                        const parsedData = JSON.parse(trendsData);
+                        if (parsedData.default && parsedData.default.timelineData && parsedData.default.timelineData.length > 0) {
+                            const latestPoint = parsedData.default.timelineData[parsedData.default.timelineData.length - 1];
+                            searchInterest = latestPoint.value[0] || 0;
+                        }
+                    } catch (e) {
+                        // console.warn(`Google Trends API failed for ${finalQuery}:`, e);
+                    }
                 }
 
+                // Calculate score (Base rank score + bonuses)
+                // For items > 20, social/video/interest will be 0, so they just get the base rank score
                 const rank = index + 1;
                 const trendScore = calculateTrendScore(rank, socialCount, videoCount, searchInterest);
 
@@ -109,31 +112,13 @@ export async function getDailyTrends(geo: string = 'US'): Promise<TrendItem[]> {
                     trendScore
                 };
             }));
-            processedTopItems.push(...batchResults);
+            processedItems.push(...batchResults);
         }
 
-        // Sort top items by Trend Score
-        processedTopItems.sort((a, b) => (b.trendScore?.total || 0) - (a.trendScore?.total || 0));
+        // Sort by Trend Score (Top 20 might shuffle, others will likely stay in order of rank)
+        processedItems.sort((a, b) => (b.trendScore?.total || 0) - (a.trendScore?.total || 0));
 
-        // Process remaining items (simple mapping, no deep scoring)
-        const processedRemainingItems = remainingSlice.map((item, index) => {
-            const title = item.title?.split(' - ')[0] || item.title || 'Unknown Trend';
-            return {
-                title: { query: title },
-                formattedTraffic: 'Trending Now',
-                relatedQueries: [],
-                articles: [{
-                    title: item.title || '',
-                    url: item.link || '',
-                    source: item.contentSnippet || item.creator || 'Google News'
-                }],
-                shareUrl: item.link || '',
-                // Base score only for remaining items
-                trendScore: calculateTrendScore(20 + index + 1, 0, 0, 0)
-            };
-        });
-
-        return [...processedTopItems, ...processedRemainingItems];
+        return processedItems;
 
     } catch (error) {
         console.error('Error fetching trends from RSS:', error);
