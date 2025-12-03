@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import TrendCard from './TrendCard';
 import { CountrySelector } from './CountrySelector';
 import { DatePicker } from './DatePicker';
+import { ThemeToggle } from './ThemeToggle';
 import { TrendItem } from '@/types';
 import { Loader2, RefreshCw, History } from 'lucide-react';
 
@@ -55,6 +56,27 @@ export function TrendDashboard() {
     };
 
     useEffect(() => {
+        // Auto-detect user country on mount
+        const detectCountry = async () => {
+            try {
+                const res = await fetch('https://ipapi.co/json/');
+                const data = await res.json();
+                const userCountry = data.country_code;
+                const supportedCountries = ['US', 'JP', 'KR', 'CN', 'TW'];
+
+                if (supportedCountries.includes(userCountry)) {
+                    setGeo(userCountry);
+                }
+            } catch (error) {
+                console.error('Failed to detect country:', error);
+                // Default remains 'US'
+            }
+        };
+
+        detectCountry();
+    }, []);
+
+    useEffect(() => {
         fetchTrends();
     }, [geo, date]);
 
@@ -65,12 +87,7 @@ export function TrendDashboard() {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
                 <div>
                     <h1 className="text-3xl font-bold text-zinc-900 dark:text-white tracking-tight flex items-center gap-2">
-                        {isHistoryMode ? 'Trend History' : 'Global Trends'}
-                        {isHistoryMode && (
-                            <span className="text-xs font-normal px-2 py-1 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-full">
-                                Archive
-                            </span>
-                        )}
+                        Global Trends
                     </h1>
                     <p className="text-zinc-500 dark:text-zinc-400 mt-1">
                         {isHistoryMode
@@ -88,6 +105,8 @@ export function TrendDashboard() {
                         onChange={setDate}
                         onClear={clearDate}
                     />
+
+                    <ThemeToggle />
 
                     <button
                         onClick={fetchTrends}

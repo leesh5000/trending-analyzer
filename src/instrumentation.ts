@@ -3,12 +3,12 @@ export async function register() {
         const cron = await import('node-cron');
         const { runHourlyJob } = await import('@/lib/cron-service');
 
-        // Schedule task to run every hour at minute 0
-        cron.schedule('0 * * * *', async () => {
-            console.log('[Scheduler] Running hourly trend update...');
+        // Schedule task to run every 4 hours at minute 0
+        cron.schedule('0 */4 * * *', async () => {
+            console.log('[Scheduler] Running 4-hourly trend update...');
             await runHourlyJob();
         });
 
-        console.log('[Scheduler] Hourly trend update scheduled (0 * * * *).');
+        console.log('[Scheduler] Trend update scheduled (0 */4 * * *).');
     }
 }

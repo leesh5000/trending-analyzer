@@ -9,15 +9,15 @@ export async function GET(request: Request) {
     const geo = searchParams.get('geo') || 'US';
 
     try {
-        // 1. Check for fresh data in DB (within last 1 hour)
-        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+        // 1. Check for fresh data in DB (within last 4 hours)
+        const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000);
 
         // Find the most recent snapshot timestamp for this geo
         const latestSnapshot = await prisma.trendHistory.findFirst({
             where: {
                 geo,
                 timestamp: {
-                    gte: oneHourAgo
+                    gte: fourHoursAgo
                 }
             },
             orderBy: {

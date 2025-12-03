@@ -21,34 +21,66 @@ export default function TrendCard({ trend, rank, geo }: TrendCardProps) {
     const [loading, setLoading] = useState(false);
 
     const toggleExpand = async () => {
-        if (!isExpanded && !summary) {
-            setLoading(true);
-            try {
-                // Fetch context (news, videos, social)
-                const contextRes = await fetch(`/api/context?keyword=${encodeURIComponent(trend.title.query)}&geo=${geo}`);
-                const contextData = await contextRes.json();
+        if (!isExpanded) {
+            // Use pre-fetched summary if available
+            if (trend.aiSummary && !summary) {
+                setSummary(trend.aiSummary);
+            }
 
-                // Fetch AI Summary
-                // Use the fetched headlines for better context
-                const headlines = contextData.news ? contextData.news.map((n: any) => n.title) : trend.articles.map(a => a.title);
+            // Use pre-fetched videos/social if available
+            const hasContext = (trend.videos && trend.videos.length > 0) || (trend.social && trend.social.length > 0);
 
-                const summaryRes = await fetch('/api/summary', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ keyword: trend.title.query, headlines, geo }),
-                });
-                const summaryData = await summaryRes.json();
-                setSummary(summaryData.summary || 'Could not generate summary.');
+            if (hasContext) {
+                if (videos.length === 0 && trend.videos) setVideos(trend.videos);
+                if (social.length === 0 && trend.social) setSocial(trend.social);
+            }
 
-                const fetchedNews = contextData.news || [];
-                setNews(fetchedNews);
-                setVideos(contextData.videos || []);
-                setSocial(contextData.social || []);
-            } catch (error) {
-                console.error('Failed to load context', error);
-                setSummary('Failed to load insights.');
-            } finally {
-                setLoading(false);
+            // Only fetch context if not already loaded AND we don't have pre-fetched data
+            // Or if we don't have a summary yet (and no pre-fetched summary)
+            if (!summary && !trend.aiSummary && !hasContext) {
+                setLoading(true);
+                try {
+                    // Fetch context (news, videos, social)
+                    const contextRes = await fetch(`/api/context?keyword=${encodeURIComponent(trend.title.query)}&geo=${geo}`);
+                    const contextData = await contextRes.json();
+
+                    // Fetch AI Summary
+                    // Use the fetched headlines for better context
+                    const headlines = contextData.news ? contextData.news.map((n: any) => n.title) : trend.articles.map(a => a.title);
+
+                    const summaryRes = await fetch('/api/summary', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ keyword: trend.title.query, headlines, geo }),
+                    });
+                    const summaryData = await summaryRes.json();
+                    setSummary(summaryData.summary || 'Could not generate summary.');
+
+                    const fetchedNews = contextData.news || [];
+                    setNews(fetchedNews);
+                    setVideos(contextData.videos || []);
+                    setSocial(contextData.social || []);
+                } catch (error) {
+                    console.error('Failed to load context', error);
+                    setSummary('Failed to load insights.');
+                } finally {
+                    setLoading(false);
+                }
+            } else if (!hasContext && videos.length === 0) {
+                // Even if we have summary, we might want to fetch videos/news lazily if not present
+                // But for now, let's just rely on what we have or fetch silently
+                setLoading(true);
+                try {
+                    const contextRes = await fetch(`/api/context?keyword=${encodeURIComponent(trend.title.query)}&geo=${geo}`);
+                    const contextData = await contextRes.json();
+                    setNews(contextData.news || []);
+                    setVideos(contextData.videos || []);
+                    setSocial(contextData.social || []);
+                } catch (e) {
+                    console.error("Failed to fetch extra context", e);
+                } finally {
+                    setLoading(false);
+                }
             }
         }
         setIsExpanded(!isExpanded);

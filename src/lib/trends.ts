@@ -24,20 +24,28 @@ export async function getDailyTrends(geo: string = 'US'): Promise<TrendItem[]> {
 
         // Extract keywords using AI for ALL items to ensure consistent formatting
         let keywords: string[] = [];
+        let summaries: string[] = [];
         if (process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
             try {
                 const { object } = await generateObject({
                     model: google('gemini-2.0-flash'),
                     schema: z.object({
-                        keywords: z.array(z.string()).describe('List of extracted keywords corresponding to the headlines')
+                        items: z.array(z.object({
+                            keyword: z.string().describe('Extracted keyword'),
+                            summary: z.string().describe('One sentence summary explaining why this is trending')
+                        })).describe('List of extracted keywords and summaries')
                     }),
                     prompt: `
-            Extract the main topic/keyword (1-3 words) from each of these news headlines.
+            Analyze these news headlines and extract:
+            1. Main topic/keyword (1-3 words).
+            2. A short, one-sentence summary explaining WHY it is trending (based on the headline).
+            
             Return them in the exact same order.
             
             IMPORTANT:
-            - If the country code is 'US', return the keyword in English.
-            - If the country code is NOT 'US' (e.g., KR, JP, CN, TW), translate the keyword to KOREAN.
+            - ALWAYS translate the extracted keyword to KOREAN (Hangul).
+            - ALWAYS translate the summary to KOREAN (Hangul).
+            - Even if the source is English, Japanese, or Chinese, the output MUST be in Korean.
             
             Target Country: ${geo}
             
@@ -45,38 +53,75 @@ export async function getDailyTrends(geo: string = 'US'): Promise<TrendItem[]> {
             ${allItems.map((item: any, i: number) => `${i + 1}. ${item.title}`).join('\n')}
           `,
                 });
-                keywords = object.keywords;
+                keywords = object.items.map(i => i.keyword);
+                summaries = object.items.map(i => i.summary);
             } catch (e) {
                 console.error('AI keyword extraction failed:', e);
             }
         }
 
-        // Process ALL items in batches
+        // Deduplicate and Group by Keyword
+        // Algorithm:
+        // 1. Iterate through all items and their AI-extracted keywords.
+        // 2. Use a Map to group items by "Keyword".
+        // 3. If a keyword repeats, merge the new article into the existing group (Aggregation).
+        // 4. This ensures unique titles in the final list and consolidates related news.
+        const uniqueItemsMap = new Map<string, {
+            originalIndex: number;
+            keyword: string;
+            summary: string;
+            rssItems: any[];
+        }>();
+
+        allItems.forEach((item, index) => {
+            const keyword = keywords[index] || item.title?.split(' - ')[0] || item.title || 'Unknown Trend';
+            const summary = summaries[index] || '';
+
+            if (!uniqueItemsMap.has(keyword)) {
+                uniqueItemsMap.set(keyword, {
+                    originalIndex: index,
+                    keyword,
+                    summary,
+                    rssItems: [item]
+                });
+            } else {
+                uniqueItemsMap.get(keyword)?.rssItems.push(item);
+            }
+        });
+
+        const uniqueTrendsList = Array.from(uniqueItemsMap.values());
+
+        // Process UNIQUE items in batches
         const BATCH_SIZE = 5;
         const processedItems: TrendItem[] = [];
 
-        for (let i = 0; i < allItems.length; i += BATCH_SIZE) {
-            const batch = allItems.slice(i, i + BATCH_SIZE);
-            const batchResults = await Promise.all(batch.map(async (item, batchIndex) => {
-                const index = i + batchIndex;
-                const aiKeyword = keywords[index];
-                const originalTitle = item.title?.split(' - ')[0] || item.title || 'Unknown Trend';
-                const finalQuery = aiKeyword || originalTitle;
+        for (let i = 0; i < uniqueTrendsList.length; i += BATCH_SIZE) {
+            const batch = uniqueTrendsList.slice(i, i + BATCH_SIZE);
+            const batchResults = await Promise.all(batch.map(async (group, batchIndex) => {
+                const { keyword, summary, rssItems, originalIndex } = group;
+                const finalQuery = keyword;
 
-                // Fetch Social & Video Stats for Ranking (Only for top 20 to save API quota)
+                // Fetch Social & Video Stats for Ranking (Only for top 20 unique items)
+                // We use the index in the UNIQUE list to decide "Top Tier", preserving relative order
+                const isTopTier = (i + batchIndex) < 20;
+
                 let socialCount = 0;
                 let videoCount = 0;
                 let searchInterest = 0;
-                const isTopTier = index < 20;
+
+                let videos: any[] = [];
+                let redditPosts: any[] = [];
 
                 if (isTopTier) {
                     try {
-                        const [videos, redditPosts] = await Promise.all([
+                        const [v, r] = await Promise.all([
                             getVideos(finalQuery).catch(() => []),
                             getRedditPosts(finalQuery).catch(() => [])
                         ]);
+                        videos = v;
+                        redditPosts = r;
                         videoCount = videos.length;
-                        socialCount = redditPosts.reduce((acc, post) => acc + (post.score || 0), 0);
+                        socialCount = redditPosts.reduce((acc: any, post: any) => acc + (post.score || 0), 0);
                     } catch (e) {
                         console.error(`Error fetching social stats for ${finalQuery}`, e);
                     }
@@ -94,22 +139,26 @@ export async function getDailyTrends(geo: string = 'US'): Promise<TrendItem[]> {
                     }
                 }
 
-                // Calculate score (Base rank score + bonuses)
-                // For items > 20, social/video/interest will be 0, so they just get the base rank score
-                const rank = index + 1;
+                // Calculate score
+                // Use the original index as a proxy for "News Rank" since RSS feed is ordered by importance
+                const rank = originalIndex + 1;
                 const trendScore = calculateTrendScore(rank, socialCount, videoCount, searchInterest);
 
                 return {
                     title: { query: finalQuery },
                     formattedTraffic: 'Trending Now',
                     relatedQueries: [],
-                    articles: [{
+                    // Map ALL aggregated RSS items to articles
+                    articles: rssItems.map(item => ({
                         title: item.title || '',
                         url: item.link || '',
                         source: item.contentSnippet || item.creator || 'Google News'
-                    }],
-                    shareUrl: item.link || '',
-                    trendScore
+                    })),
+                    shareUrl: rssItems[0].link || '',
+                    trendScore,
+                    aiSummary: summary,
+                    videos: isTopTier ? videos : [],
+                    social: isTopTier ? redditPosts : []
                 };
             }));
             processedItems.push(...batchResults);

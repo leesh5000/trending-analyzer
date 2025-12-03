@@ -45,7 +45,13 @@ export function DatePicker({ value, onChange, onClear }: DatePickerProps) {
     const handleQuickSelect = (daysAgo: number) => {
         const d = new Date();
         d.setDate(d.getDate() - daysAgo);
-        d.setMinutes(0, 0, 0); // Reset minutes/seconds
+
+        // If "Now" (daysAgo === 0), keep current hour but reset minutes/seconds
+        // If past days, maybe default to same time or start of day? 
+        // User request specifically for "Now" -> "current time minus minutes (on the hour)"
+        // For others, let's keep it consistent or just reset minutes
+        d.setMinutes(0, 0, 0);
+
         const iso = d.toISOString();
         onChange(iso);
         setIsOpen(false);
@@ -106,7 +112,7 @@ export function DatePicker({ value, onChange, onClear }: DatePickerProps) {
                             {/* Quick Actions */}
                             <div className="grid grid-cols-2 gap-2">
                                 <button onClick={() => handleQuickSelect(0)} className="px-3 py-2 text-xs font-medium bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded-md text-zinc-700 dark:text-zinc-300 transition-colors">
-                                    Today
+                                    Now
                                 </button>
                                 <button onClick={() => handleQuickSelect(1)} className="px-3 py-2 text-xs font-medium bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded-md text-zinc-700 dark:text-zinc-300 transition-colors">
                                     Yesterday

@@ -13,6 +13,9 @@ export interface TrendItem {
             searchInterest: number;
         };
     };
+    aiSummary?: string;
+    videos?: VideoItem[];
+    social?: SocialItem[];
 }
 
 export interface NewsItem {
